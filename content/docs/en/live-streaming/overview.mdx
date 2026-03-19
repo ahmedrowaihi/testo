@@ -1,0 +1,73 @@
+---
+title: Overview
+description: Introduction to building a production-grade live streaming platform on AWS.
+---
+
+# Build Live Streaming on AWS
+
+This tutorial walks you through building a **production-grade live streaming platform** using AWS managed services. By the end, you'll have a fully functional pipeline that ingests an RTMP stream, encodes it into adaptive bitrate HLS, and delivers it globally through a CDN.
+
+![Architecture Overview](/_assets/images/live-streaming/architecture.svg)
+
+## What You'll Build
+
+- **Ingest** — Accept RTMP streams from encoders like OBS Studio
+- **Transcode** — Encode into multiple quality levels using AWS MediaLive
+- **Package** — Generate HLS/DASH manifests with AWS MediaPackage
+- **Deliver** — Distribute globally with sub-second caching via Amazon CloudFront
+- **Monitor** — Real-time dashboards and alerts with CloudWatch
+
+## AWS Services Used
+
+| Service               | Purpose                  | Pricing Model                 |
+| --------------------- | ------------------------ | ----------------------------- |
+| **AWS MediaLive**     | Real-time video encoding | Per minute of input           |
+| **AWS MediaPackage**  | Origin & packaging       | Per GB of content originated  |
+| **Amazon CloudFront** | CDN delivery             | Per GB transferred + requests |
+| **Amazon S3**         | VOD archive storage      | Per GB stored                 |
+| **Amazon CloudWatch** | Monitoring & alerts      | Per metric + dashboard        |
+
+## Prerequisites
+
+Before starting, make sure you have:
+
+- An **AWS account** with appropriate IAM permissions
+- **AWS CLI v2** installed and configured
+- **OBS Studio** (or any RTMP-capable encoder) for testing
+- Basic familiarity with video streaming concepts (HLS, RTMP, ABR)
+
+```bash
+# Verify AWS CLI is configured
+aws sts get-caller-identity
+
+# Check you have the right permissions
+aws medialive list-channels
+aws mediapackage list-channels
+```
+
+## Estimated Costs
+
+For a single live stream running **4 hours** with **1,000 concurrent viewers**:
+
+| Component                          | Estimated Cost |
+| ---------------------------------- | -------------- |
+| MediaLive (1080p, single pipeline) | ~$4.80         |
+| MediaPackage                       | ~$1.50         |
+| CloudFront (500 GB transfer)       | ~$42.50        |
+| S3 (archive, 50 GB)                | ~$1.15         |
+| **Total**                          | **~$50**       |
+
+> **Tip:** Use the [AWS Pricing Calculator](https://calculator.aws/) to estimate costs for your specific use case. Costs vary by region.
+
+## Tutorial Structure
+
+This guide is organized as a step-by-step walkthrough:
+
+1. **[Architecture](/docs/live-streaming/architecture)** — Understand the system design
+2. **[MediaLive](/docs/live-streaming/medialive)** — Set up the encoder
+3. **[MediaPackage](/docs/live-streaming/mediapackage)** — Configure the origin
+4. **[CloudFront](/docs/live-streaming/cloudfront)** — Deploy the CDN
+5. **[OBS Setup](/docs/live-streaming/obs-setup)** — Configure your encoder
+6. **[Player Integration](/docs/live-streaming/player-integration)** — Build the viewer experience
+7. **[Monitoring](/docs/live-streaming/monitoring)** — Set up dashboards and alerts
+8. **[Cost Optimization](/docs/live-streaming/cost-optimization)** — Reduce your bill

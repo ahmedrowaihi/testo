@@ -1,0 +1,200 @@
+---
+title: Cost Optimization
+description: Strategies to minimize AWS costs for your live streaming infrastructure.
+---
+
+# Cost Optimization
+
+Live streaming on AWS can get expensive quickly. This section covers practical strategies to reduce costs without sacrificing quality or reliability.
+
+## Cost Breakdown
+
+For a typical live streaming workload, costs distribute roughly as:
+
+| Component | % of Total Cost | Scale Factor |
+|-----------|----------------|--------------|
+| **CloudFront** | 60-70% | Viewers × bandwidth |
+| **MediaLive** | 20-25% | Stream duration × quality |
+| **MediaPackage** | 5-10% | Originated data |
+| **S3 (archive)** | 1-5% | Hours archived |
+| **CloudWatch** | < 1% | Metrics & dashboards |
+
+> CloudFront dominates costs at scale. Optimizing delivery is the highest-impact lever.
+
+## Strategy 1: Right-Size Your ABR Ladder
+
+Don't encode more renditions than your audience needs.
+
+### Audience Analysis
+
+```bash
+# Check viewer quality distribution from CloudFront logs
+# Parse access logs to see which renditions are most requested
+aws s3 cp s3://my-live-stream-logs/cdn-logs/ ./logs/ --recursive
+
+# Count requests per rendition
+grep -c "_1080p" ./logs/*.gz   # How many 1080p requests?
+grep -c "_720p" ./logs/*.gz    # How many 720p requests?
+grep -c "_480p" ./logs/*.gz    # How many 480p requests?
+```
+
+### Cost Comparison
+
+| ABR Ladder | MediaLive Cost/hr | Savings |
+|-----------|-------------------|---------|
+| 1080p + 720p + 480p + 360p | $1.20 | Baseline |
+| 1080p + 720p + 480p | $0.95 | 21% |
+| 720p + 480p | $0.65 | 46% |
+
+> If fewer than 10% of viewers watch at 1080p, consider dropping it and making 720p your top tier.
+
+## Strategy 2: Use Single Pipeline for Non-Critical Streams
+
+| Channel Class | Cost | Redundancy |
+|--------------|------|------------|
+| STANDARD | 2× | Dual pipeline, automatic failover |
+| SINGLE_PIPELINE | 1× | No redundancy |
+
+Use **SINGLE_PIPELINE** for:
+- Test streams and rehearsals
+- Internal company streams
+- Non-revenue generating content
+
+Use **STANDARD** for:
+- Customer-facing production streams
+- Paid events
+- Anything with SLA requirements
+
+```bash
+# Create a single pipeline channel (half the cost)
+aws medialive create-channel \
+  --channel-class SINGLE_PIPELINE \
+  --cli-input-json file://channel-config.json
+```
+
+## Strategy 3: Stop Idle Channels
+
+MediaLive charges per minute while running. **Always stop channels** when not streaming:
+
+```bash
+# Stop the channel when done
+aws medialive stop-channel --channel-id CHANNEL_ID
+
+# Automate with EventBridge (stop after 30 min of no input)
+aws events put-rule \
+  --name "StopIdleMediaLive" \
+  --schedule-expression "rate(30 minutes)"
+```
+
+### Automation Script
+
+```python title="stop_idle_channels.py"
+import boto3
+from datetime import datetime, timedelta
+
+client = boto3.client('medialive')
+cw = boto3.client('cloudwatch')
+
+channels = client.list_channels()['Channels']
+
+for channel in channels:
+    if channel['State'] != 'RUNNING':
+        continue
+
+    # Check if input bitrate is zero for the last 15 minutes
+    response = cw.get_metric_statistics(
+        Namespace='AWS/MediaLive',
+        MetricName='NetworkIn',
+        Dimensions=[
+            {'Name': 'ChannelId', 'Value': channel['Id']},
+            {'Name': 'Pipeline', 'Value': '0'},
+        ],
+        StartTime=datetime.utcnow() - timedelta(minutes=15),
+        EndTime=datetime.utcnow(),
+        Period=300,
+        Statistics=['Average'],
+    )
+
+    datapoints = response['Datapoints']
+    if all(dp['Average'] == 0 for dp in datapoints):
+        print(f"Stopping idle channel: {channel['Name']} ({channel['Id']})")
+        client.stop_channel(ChannelId=channel['Id'])
+```
+
+## Strategy 4: Optimize CloudFront Costs
+
+### Use the Right Price Class
+
+| Price Class | Regions | Cost |
+|------------|---------|------|
+| `PriceClass_100` | NA + EU only | Lowest |
+| `PriceClass_200` | + Asia, Africa, Middle East | Medium |
+| `PriceClass_All` | All edge locations | Highest |
+
+If 90%+ of your audience is in North America and Europe, use `PriceClass_100`:
+
+```bash
+# Save 20-30% on CloudFront
+aws cloudfront update-distribution \
+  --id DIST_ID \
+  --distribution-config '{ "PriceClass": "PriceClass_100" }'
+```
+
+### Maximize Cache Hit Ratio
+
+Every cache miss costs money (origin data transfer + MediaPackage egress):
+
+- Enable **Origin Shield** (reduces origin requests by 50-80%)
+- Use **separate TTLs** for manifests vs segments
+- Don't forward unnecessary headers, cookies, or query strings
+- Use `Cache-Control: immutable` for `.ts` segments
+
+### Consider Reserved Capacity
+
+For 24/7 streaming channels, contact AWS for **committed use discounts**. Savings of 30-50% are common for 1-year commitments.
+
+## Strategy 5: Archive to S3 Intelligently
+
+```bash
+# Use S3 Intelligent-Tiering for VOD archives
+aws s3api put-bucket-intelligent-tiering-configuration \
+  --bucket my-live-archive \
+  --id "archive-tiering" \
+  --intelligent-tiering-configuration '{
+    "Id": "archive-tiering",
+    "Status": "Enabled",
+    "Tierings": [
+      {"AccessTier": "ARCHIVE_ACCESS", "Days": 90},
+      {"AccessTier": "DEEP_ARCHIVE_ACCESS", "Days": 180}
+    ]
+  }'
+```
+
+| Storage Class | Cost/GB/month | Access Time |
+|--------------|---------------|-------------|
+| S3 Standard | $0.023 | Instant |
+| S3 Intelligent-Tiering | $0.023 → $0.004 | Instant → hours |
+| S3 Glacier | $0.004 | Minutes to hours |
+| S3 Glacier Deep Archive | $0.00099 | 12-48 hours |
+
+## Monthly Cost Estimate Tool
+
+Use this formula to estimate your monthly costs:
+
+```
+MediaLive    = hours × $1.20/hr × (1 if single, 2 if standard)
+MediaPackage = total_originated_GB × $0.015/GB
+CloudFront   = total_delivered_GB × $0.085/GB (first 10TB)
+S3           = archived_GB × $0.023/GB
+```
+
+### Example: 8 hours/day, 5 days/week, 5,000 viewers
+
+```
+MediaLive:    160 hrs × $1.20  = $192
+MediaPackage: 800 GB × $0.015 = $12
+CloudFront:   8,000 GB × $0.085 = $680
+S3:           400 GB × $0.023 = $9.20
+──────────────────────────────────
+Total:                          ~$893/month
+```

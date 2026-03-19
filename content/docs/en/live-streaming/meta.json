@@ -1,0 +1,14 @@
+{
+  "title": "Live Streaming on AWS",
+  "pages": [
+    "overview",
+    "architecture",
+    "medialive",
+    "mediapackage",
+    "cloudfront",
+    "obs-setup",
+    "player-integration",
+    "monitoring",
+    "cost-optimization"
+  ]
+}

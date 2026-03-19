@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 250" font-family="system-ui, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#f97316"/>
+    </marker>
+    <linearGradient id="bg2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="250" rx="12" fill="url(#bg2)"/>
+
+  <text x="400" y="30" text-anchor="middle" fill="#94a3b8" font-size="14" font-weight="600">MediaLive Channel Pipeline</text>
+
+  <!-- Input -->
+  <rect x="30" y="70" width="130" height="100" rx="8" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="95" y="105" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Input</text>
+  <text x="95" y="125" text-anchor="middle" fill="#93c5fd" font-size="10">RTMP Push</text>
+  <text x="95" y="140" text-anchor="middle" fill="#93c5fd" font-size="10">1080p @ 30fps</text>
+  <text x="95" y="155" text-anchor="middle" fill="#93c5fd" font-size="10">H.264 + AAC</text>
+
+  <line x1="160" y1="120" x2="200" y2="120" stroke="#f97316" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Encoder -->
+  <rect x="210" y="55" width="160" height="130" rx="8" fill="#7c2d12" stroke="#f97316" stroke-width="1.5"/>
+  <text x="290" y="80" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Encoding</text>
+  <text x="290" y="100" text-anchor="middle" fill="#fdba74" font-size="10">1080p  5.0 Mbps</text>
+  <text x="290" y="115" text-anchor="middle" fill="#fdba74" font-size="10">720p   3.0 Mbps</text>
+  <text x="290" y="130" text-anchor="middle" fill="#fdba74" font-size="10">480p   1.5 Mbps</text>
+  <text x="290" y="145" text-anchor="middle" fill="#fdba74" font-size="10">360p   0.8 Mbps</text>
+  <text x="290" y="165" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="600">ABR Ladder</text>
+
+  <line x1="370" y1="120" x2="410" y2="120" stroke="#f97316" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Output -->
+  <rect x="420" y="70" width="150" height="100" rx="8" fill="#14532d" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="495" y="105" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Output Group</text>
+  <text x="495" y="125" text-anchor="middle" fill="#86efac" font-size="10">HLS Output</text>
+  <text x="495" y="140" text-anchor="middle" fill="#86efac" font-size="10">6s Segments</text>
+  <text x="495" y="155" text-anchor="middle" fill="#86efac" font-size="10">3 Segment Window</text>
+
+  <line x1="570" y1="120" x2="610" y2="120" stroke="#f97316" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Destination -->
+  <rect x="620" y="70" width="150" height="100" rx="8" fill="#581c87" stroke="#a855f7" stroke-width="1.5"/>
+  <text x="695" y="100" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Destinations</text>
+  <text x="695" y="120" text-anchor="middle" fill="#d8b4fe" font-size="10">MediaPackage</text>
+  <text x="695" y="135" text-anchor="middle" fill="#d8b4fe" font-size="10">S3 Archive</text>
+  <text x="695" y="155" text-anchor="middle" fill="#d8b4fe" font-size="10">RTMP Relay</text>
+
+  <!-- Labels -->
+  <text x="400" y="225" text-anchor="middle" fill="#64748b" font-size="11">Standard channel with dual-pipeline redundancy recommended for production</text>
+</svg>

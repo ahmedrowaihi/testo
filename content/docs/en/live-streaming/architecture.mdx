@@ -1,0 +1,108 @@
+---
+title: Architecture
+description: System architecture for a scalable live streaming platform on AWS.
+---
+
+# Architecture
+
+Understanding the architecture is critical before provisioning resources. This section covers the data flow, redundancy model, and key design decisions.
+
+![Architecture Diagram](/_assets/images/live-streaming/architecture.svg)
+
+## Data Flow
+
+```
+Camera/OBS → RTMP → MediaLive → HLS → MediaPackage → CloudFront → Viewers
+```
+
+### Step-by-Step Flow
+
+1. **Source Encoder** (OBS Studio) captures video and audio, encodes to H.264/AAC, and pushes via RTMP to MediaLive's input endpoint.
+
+2. **AWS MediaLive** receives the RTMP stream and transcodes it into multiple renditions (1080p, 720p, 480p, 360p) creating an ABR (Adaptive Bitrate) ladder. Output is HLS segments.
+
+3. **AWS MediaPackage** acts as the origin server. It receives HLS from MediaLive, generates manifests, applies DRM if needed, and provides a stable origin URL.
+
+4. **Amazon CloudFront** caches segments at 400+ edge locations worldwide, providing low-latency delivery to end users.
+
+5. **Viewers** consume the stream through HLS.js (web), ExoPlayer (Android), AVPlayer (iOS), or native Smart TV apps.
+
+## Redundancy Model
+
+For production workloads, use a **Standard Channel** in MediaLive with dual pipelines:
+
+```
+                    ┌─── Pipeline A ───┐
+Source (OBS) ───►   │   MediaLive      │ ───► MediaPackage ───► CloudFront
+                    └─── Pipeline B ───┘
+```
+
+- **Pipeline A** is the primary processing path
+- **Pipeline B** is the standby that activates on failure
+- MediaPackage automatically detects and switches between pipeline outputs
+- Failover typically completes in **< 5 seconds**
+
+### Input Redundancy
+
+For maximum reliability, push your RTMP stream to both pipeline endpoints:
+
+```bash
+# Pipeline A endpoint (primary)
+rtmp://a]1234567.mediaconnect.us-east-1.amazonaws.com:1935/live/stream-key-a
+
+# Pipeline B endpoint (redundant)
+rtmp://b-1234567.mediaconnect.us-east-1.amazonaws.com:1935/live/stream-key-b
+```
+
+## Network Architecture
+
+### VPC Considerations
+
+MediaLive can run inside a VPC for additional security:
+
+```
+┌──────────────────── VPC ────────────────────┐
+│                                              │
+│  ┌─── Private Subnet A ───┐                 │
+│  │   MediaLive Pipeline A  │                 │
+│  └─────────────────────────┘                 │
+│                                              │
+│  ┌─── Private Subnet B ───┐                 │
+│  │   MediaLive Pipeline B  │                 │
+│  └─────────────────────────┘                 │
+│                                              │
+│  ┌─── Public Subnet ──────┐                 │
+│  │   NAT Gateway           │ ──► Internet   │
+│  └─────────────────────────┘                 │
+└──────────────────────────────────────────────┘
+```
+
+> **Note:** Running MediaLive in a VPC adds latency (~100ms). Only use VPC mode if your security requirements demand it.
+
+## Latency Targets
+
+| Segment               | Target Latency | Notes                         |
+| --------------------- | -------------- | ----------------------------- |
+| Encode (MediaLive)    | 2-4s           | Depends on segment size & GOP |
+| Origin (MediaPackage) | < 500ms        | Minimal processing overhead   |
+| CDN (CloudFront)      | < 100ms        | Edge cache hits               |
+| Player Buffer         | 2-6s           | Depends on player config      |
+| **End-to-End**        | **6-15s**      | Standard HLS latency          |
+
+> For **low-latency HLS** (LL-HLS), end-to-end latency can be reduced to **3-5 seconds**. This requires partial segment support in MediaPackage and a compatible player.
+
+## Infrastructure as Code
+
+We recommend managing this stack with **AWS CloudFormation** or **Terraform**. The resources we'll create:
+
+```yaml
+Resources:
+  - AWS::MediaLive::Input # RTMP input endpoint
+  - AWS::MediaLive::Channel # Encoder channel
+  - AWS::MediaPackage::Channel # Origin channel
+  - AWS::MediaPackage::OriginEndpoint # HLS endpoint
+  - AWS::CloudFront::Distribution # CDN distribution
+  - AWS::IAM::Role # MediaLive execution role
+  - AWS::CloudWatch::Dashboard # Monitoring dashboard
+  - AWS::CloudWatch::Alarm # Alerting rules
+```

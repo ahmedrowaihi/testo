@@ -1,0 +1,232 @@
+---
+title: Monitoring
+description: Set up CloudWatch dashboards and alerts for your live streaming pipeline.
+---
+
+# Monitoring & Alerting
+
+A live stream that nobody is watching for errors is a ticking time bomb. This section covers building a CloudWatch dashboard and configuring alerts for critical metrics.
+
+![Monitoring Dashboard](/_assets/images/live-streaming/monitoring-dashboard.svg)
+
+## Key Metrics
+
+### MediaLive Metrics
+
+| Metric | Namespace | What It Tells You |
+|--------|-----------|-------------------|
+| `NetworkIn` | AWS/MediaLive | Input bitrate (bytes/sec) |
+| `NetworkOut` | AWS/MediaLive | Output bitrate (bytes/sec) |
+| `DroppedFrames` | AWS/MediaLive | Frames dropped due to encoder overload |
+| `FillMsec` | AWS/MediaLive | Duration of input loss (ms) |
+| `InputVideoFrameRate` | AWS/MediaLive | Source frame rate |
+| `OutputVideoFrameRate` | AWS/MediaLive | Encoded frame rate |
+| `ActiveAlerts` | AWS/MediaLive | Number of active channel alerts |
+
+### MediaPackage Metrics
+
+| Metric | Namespace | What It Tells You |
+|--------|-----------|-------------------|
+| `IngressBytes` | AWS/MediaPackage | Data received from MediaLive |
+| `EgressBytes` | AWS/MediaPackage | Data served to CloudFront |
+| `IngressResponseTime` | AWS/MediaPackage | Time to process ingest requests |
+| `EgressRequestCount` | AWS/MediaPackage | Number of origin requests |
+| `StatusCode4xx` | AWS/MediaPackage | Client errors (missing segments) |
+| `StatusCode5xx` | AWS/MediaPackage | Server errors |
+
+### CloudFront Metrics
+
+| Metric | Namespace | What It Tells You |
+|--------|-----------|-------------------|
+| `Requests` | AWS/CloudFront | Total viewer requests |
+| `BytesDownloaded` | AWS/CloudFront | Data served to viewers |
+| `4xxErrorRate` | AWS/CloudFront | Percentage of 4xx responses |
+| `5xxErrorRate` | AWS/CloudFront | Percentage of 5xx responses |
+| `CacheHitRate` | AWS/CloudFront | CDN efficiency |
+
+## Create a CloudWatch Dashboard
+
+```bash
+aws cloudwatch put-dashboard \
+  --dashboard-name "LiveStreaming" \
+  --dashboard-body '{
+    "widgets": [
+      {
+        "type": "metric",
+        "x": 0, "y": 0, "width": 12, "height": 6,
+        "properties": {
+          "title": "Input Bitrate (Mbps)",
+          "metrics": [
+            ["AWS/MediaLive", "NetworkIn", "ChannelId", "CHANNEL_ID", "Pipeline", "0", {"stat": "Average", "period": 60}],
+            ["...", "Pipeline", "1", {"stat": "Average", "period": 60}]
+          ],
+          "view": "timeSeries",
+          "region": "us-east-1",
+          "yAxis": {"left": {"label": "Mbps"}}
+        }
+      },
+      {
+        "type": "metric",
+        "x": 12, "y": 0, "width": 12, "height": 6,
+        "properties": {
+          "title": "Dropped Frames",
+          "metrics": [
+            ["AWS/MediaLive", "DroppedFrames", "ChannelId", "CHANNEL_ID", "Pipeline", "0"],
+            ["...", "Pipeline", "1"]
+          ],
+          "view": "timeSeries",
+          "region": "us-east-1"
+        }
+      },
+      {
+        "type": "metric",
+        "x": 0, "y": 6, "width": 8, "height": 6,
+        "properties": {
+          "title": "CloudFront Requests",
+          "metrics": [
+            ["AWS/CloudFront", "Requests", "DistributionId", "DIST_ID", "Region", "Global"]
+          ],
+          "view": "timeSeries",
+          "stat": "Sum",
+          "period": 60,
+          "region": "us-east-1"
+        }
+      },
+      {
+        "type": "metric",
+        "x": 8, "y": 6, "width": 8, "height": 6,
+        "properties": {
+          "title": "CloudFront Error Rates",
+          "metrics": [
+            ["AWS/CloudFront", "4xxErrorRate", "DistributionId", "DIST_ID", "Region", "Global"],
+            [".", "5xxErrorRate", ".", ".", ".", "."]
+          ],
+          "view": "timeSeries",
+          "stat": "Average",
+          "period": 60,
+          "region": "us-east-1"
+        }
+      },
+      {
+        "type": "metric",
+        "x": 16, "y": 6, "width": 8, "height": 6,
+        "properties": {
+          "title": "Cache Hit Rate",
+          "metrics": [
+            ["AWS/CloudFront", "CacheHitRate", "DistributionId", "DIST_ID", "Region", "Global"]
+          ],
+          "view": "timeSeries",
+          "stat": "Average",
+          "period": 300,
+          "region": "us-east-1"
+        }
+      }
+    ]
+  }'
+```
+
+## Set Up Alarms
+
+### Critical: Input Loss
+
+Triggers when MediaLive stops receiving input (encoder failure, network issue):
+
+```bash
+aws cloudwatch put-metric-alarm \
+  --alarm-name "LiveStream-InputLoss" \
+  --alarm-description "MediaLive input bitrate dropped to zero" \
+  --namespace "AWS/MediaLive" \
+  --metric-name "NetworkIn" \
+  --dimensions Name=ChannelId,Value=CHANNEL_ID Name=Pipeline,Value=0 \
+  --statistic Average \
+  --period 60 \
+  --threshold 0 \
+  --comparison-operator LessThanOrEqualToThreshold \
+  --evaluation-periods 2 \
+  --alarm-actions "arn:aws:sns:us-east-1:123456789012:live-stream-alerts" \
+  --treat-missing-data "breaching"
+```
+
+### Warning: Dropped Frames
+
+Triggers when encoding can't keep up:
+
+```bash
+aws cloudwatch put-metric-alarm \
+  --alarm-name "LiveStream-DroppedFrames" \
+  --alarm-description "MediaLive is dropping frames" \
+  --namespace "AWS/MediaLive" \
+  --metric-name "DroppedFrames" \
+  --dimensions Name=ChannelId,Value=CHANNEL_ID Name=Pipeline,Value=0 \
+  --statistic Sum \
+  --period 300 \
+  --threshold 10 \
+  --comparison-operator GreaterThanThreshold \
+  --evaluation-periods 1 \
+  --alarm-actions "arn:aws:sns:us-east-1:123456789012:live-stream-alerts"
+```
+
+### Critical: High Error Rate
+
+Triggers when viewers are experiencing errors:
+
+```bash
+aws cloudwatch put-metric-alarm \
+  --alarm-name "LiveStream-HighErrorRate" \
+  --alarm-description "CloudFront 5xx error rate above 1%" \
+  --namespace "AWS/CloudFront" \
+  --metric-name "5xxErrorRate" \
+  --dimensions Name=DistributionId,Value=DIST_ID Name=Region,Value=Global \
+  --statistic Average \
+  --period 300 \
+  --threshold 1 \
+  --comparison-operator GreaterThanThreshold \
+  --evaluation-periods 2 \
+  --alarm-actions "arn:aws:sns:us-east-1:123456789012:live-stream-alerts"
+```
+
+## SNS Notification Setup
+
+Create an SNS topic for alerts:
+
+```bash
+# Create topic
+aws sns create-topic --name live-stream-alerts
+
+# Subscribe your email
+aws sns subscribe \
+  --topic-arn "arn:aws:sns:us-east-1:123456789012:live-stream-alerts" \
+  --protocol email \
+  --notification-endpoint ops-team@example.com
+
+# (Optional) Subscribe a Slack webhook via Lambda
+aws sns subscribe \
+  --topic-arn "arn:aws:sns:us-east-1:123456789012:live-stream-alerts" \
+  --protocol lambda \
+  --notification-endpoint "arn:aws:lambda:us-east-1:123456789012:function:slack-notifier"
+```
+
+## Runbook: Common Issues
+
+### Input Loss Detected
+1. Check encoder (OBS) is running and connected
+2. Verify network connectivity to MediaLive endpoint
+3. Check MediaLive input security group allows encoder IP
+4. Look at `FillMsec` metric to see gap duration
+
+### High Dropped Frames
+1. Reduce source bitrate or resolution
+2. Check if MediaLive channel class supports the encoding profile
+3. Consider upgrading to a higher-tier channel
+
+### Low Cache Hit Rate (< 90%)
+1. Verify cache policies have correct TTLs
+2. Ensure Origin Shield is enabled
+3. Check if query strings are being forwarded unnecessarily
+4. Review if viewers are using unique URLs (signed URLs with per-user tokens)
+
+### 5xx Errors Spiking
+1. Check MediaPackage endpoint health
+2. Verify MediaLive is producing output
+3. Look for MediaPackage `IngressResponseTime` spikes
+4. Check CloudFront origin failover configuration

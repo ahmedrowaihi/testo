@@ -1,0 +1,190 @@
+---
+title: AWS MediaPackage
+description: Configure AWS MediaPackage as your live stream origin with HLS packaging and optional DRM.
+---
+
+# Setting Up AWS MediaPackage
+
+AWS MediaPackage is a just-in-time packaging and origination service. It takes the encoded output from MediaLive and prepares it for delivery — generating HLS/DASH manifests, applying DRM, and providing a stable origin URL for CloudFront.
+
+## Step 1: Create a MediaPackage Channel
+
+```bash
+aws mediapackage create-channel \
+  --id "my-live-channel" \
+  --description "Live streaming origin"
+```
+
+The response includes **two ingest endpoints** (one per pipeline):
+
+```json
+{
+  "Id": "my-live-channel",
+  "HlsIngest": {
+    "IngestEndpoints": [
+      {
+        "Id": "ingest-a",
+        "Url": "https://ingest-a.mediapackage.us-east-1.amazonaws.com/in/v2/abc123/def456/channel",
+        "Username": "user-a",
+        "Password": "pass-a"
+      },
+      {
+        "Id": "ingest-b",
+        "Url": "https://ingest-b.mediapackage.us-east-1.amazonaws.com/in/v2/abc123/def456/channel",
+        "Username": "user-b",
+        "Password": "pass-b"
+      }
+    ]
+  }
+}
+```
+
+**Save these credentials** — MediaLive needs them to push HLS segments to MediaPackage.
+
+## Step 2: Store Credentials in Systems Manager
+
+Store the MediaPackage credentials securely so MediaLive can access them:
+
+```bash
+# Store credentials for Pipeline A
+aws ssm put-parameter \
+  --name "/medialive/mediapackage/user-a" \
+  --type SecureString \
+  --value "user-a"
+
+aws ssm put-parameter \
+  --name "/medialive/mediapackage/pass-a" \
+  --type SecureString \
+  --value "pass-a"
+
+# Repeat for Pipeline B
+aws ssm put-parameter \
+  --name "/medialive/mediapackage/user-b" \
+  --type SecureString \
+  --value "user-b"
+
+aws ssm put-parameter \
+  --name "/medialive/mediapackage/pass-b" \
+  --type SecureString \
+  --value "pass-b"
+```
+
+## Step 3: Create an HLS Origin Endpoint
+
+The origin endpoint defines how viewers consume the stream:
+
+```bash
+aws mediapackage create-origin-endpoint \
+  --channel-id "my-live-channel" \
+  --id "hls-endpoint" \
+  --manifest-name "index" \
+  --startover-window-seconds 86400 \
+  --time-delay-seconds 0 \
+  --hls-package '{
+    "SegmentDurationSeconds": 6,
+    "PlaylistWindowSeconds": 60,
+    "PlaylistType": "EVENT",
+    "AdMarkers": "NONE",
+    "IncludeIframeOnlyStream": false,
+    "UseAudioRenditionGroup": true,
+    "StreamSelection": {
+      "MinVideoBitsPerSecond": 0,
+      "MaxVideoBitsPerSecond": 2147483647,
+      "StreamOrder": "ORIGINAL"
+    }
+  }'
+```
+
+The response includes your **playback URL**:
+
+```json
+{
+  "Url": "https://abcd1234.mediapackage.us-east-1.amazonaws.com/out/v1/xyz789/index.m3u8"
+}
+```
+
+## Step 4: (Optional) Create a DASH Endpoint
+
+For wider device compatibility, also create a DASH endpoint:
+
+```bash
+aws mediapackage create-origin-endpoint \
+  --channel-id "my-live-channel" \
+  --id "dash-endpoint" \
+  --manifest-name "index" \
+  --dash-package '{
+    "SegmentDurationSeconds": 6,
+    "ManifestWindowSeconds": 60,
+    "Profile": "NONE",
+    "ManifestLayout": "FULL",
+    "SegmentTemplateFormat": "NUMBER_WITH_TIMELINE"
+  }'
+```
+
+## Step 5: (Optional) Enable DRM
+
+To protect your content with DRM encryption:
+
+```bash
+aws mediapackage update-origin-endpoint \
+  --id "hls-endpoint" \
+  --hls-package '{
+    "Encryption": {
+      "SpekeKeyProvider": {
+        "ResourceId": "my-stream",
+        "RoleArn": "arn:aws:iam::123456789012:role/MediaPackageDRMRole",
+        "SystemIds": [
+          "edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"
+        ],
+        "Url": "https://your-drm-key-server.example.com/speke/v2"
+      }
+    }
+  }'
+```
+
+Supported DRM systems:
+
+| System ID | DRM Provider |
+|-----------|-------------|
+| `edef8ba9-79d6-4ace-a3c8-27dcd51d21ed` | Widevine |
+| `9a04f079-9840-4286-ab92-e65be0885f95` | PlayReady |
+| `94ce86fb-07ff-4f43-adb8-93d2fa968ca2` | FairPlay |
+
+## Configuration Best Practices
+
+### Segment Duration
+- **6 seconds** is the sweet spot for standard HLS
+- Shorter segments (2s) reduce latency but increase origin load
+- Longer segments (10s) improve cache efficiency but increase latency
+
+### Playlist Window
+- **60 seconds** works for most live streams
+- Increase for streams where viewers may seek backward
+- Use `startover-window-seconds` for full DVR capability
+
+### Error Handling
+MediaPackage automatically handles:
+- **Input switching** — seamlessly switches between pipeline A and B
+- **Segment gaps** — fills gaps with silence/last frame
+- **Manifest consistency** — always serves a valid manifest even during failover
+
+## Connecting MediaLive to MediaPackage
+
+Update your MediaLive channel's output destination to point to MediaPackage:
+
+```json
+{
+  "Destinations": [
+    {
+      "Id": "mediapackage-dest",
+      "MediaPackageSettings": [
+        {
+          "ChannelId": "my-live-channel"
+        }
+      ]
+    }
+  ]
+}
+```
+
+This is the simplest integration — MediaLive automatically discovers the MediaPackage ingest URLs and handles authentication.

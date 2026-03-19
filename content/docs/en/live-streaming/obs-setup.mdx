@@ -1,0 +1,153 @@
+---
+title: OBS Studio Setup
+description: Configure OBS Studio to push RTMP streams to AWS MediaLive.
+---
+
+# Configuring OBS Studio
+
+OBS Studio is a free, open-source encoder that works great as a source for AWS MediaLive. This guide covers the optimal settings for our pipeline.
+
+## Install OBS Studio
+
+Download OBS Studio from [obsproject.com](https://obsproject.com/):
+- **Windows:** `.exe` installer
+- **macOS:** `.dmg` package
+- **Linux:** Flatpak or distro package manager
+
+```bash
+# Linux (Ubuntu/Debian)
+sudo apt install obs-studio
+
+# macOS (Homebrew)
+brew install --cask obs
+```
+
+## Stream Settings
+
+Open **Settings → Stream** and configure:
+
+| Setting | Value |
+|---------|-------|
+| Service | Custom... |
+| Server | `rtmp://<MediaLive-Input-URL>:1935/live` |
+| Stream Key | `stream-a` (from your MediaLive input) |
+
+> Use the Pipeline A endpoint URL from the MediaLive input you created earlier.
+
+## Output Settings
+
+Open **Settings → Output** and switch to **Advanced** mode:
+
+### Streaming Tab
+
+| Setting | Recommended Value | Notes |
+|---------|------------------|-------|
+| Encoder | x264 (or NVENC/AMF) | Hardware encoder preferred |
+| Rate Control | CBR | Constant bitrate for live |
+| Bitrate | 5000 Kbps | Matches our 1080p target |
+| Keyframe Interval | 2s | Must match MediaLive GOP |
+| CPU Usage Preset | veryfast | Balance quality/performance |
+| Profile | high | Required for 1080p |
+| Tune | zerolatency | Minimizes encoding delay |
+
+```
+# Example x264 encoder settings
+rate_control=CBR
+bitrate=5000
+keyint=60 (2s × 30fps)
+profile=high
+tune=zerolatency
+preset=veryfast
+```
+
+### Audio Tab
+
+| Setting | Value |
+|---------|-------|
+| Audio Bitrate | 128 Kbps |
+| Sample Rate | 48 kHz |
+| Channels | Stereo |
+| Codec | AAC |
+
+## Video Settings
+
+Open **Settings → Video**:
+
+| Setting | Value |
+|---------|-------|
+| Base (Canvas) Resolution | 1920×1080 |
+| Output (Scaled) Resolution | 1920×1080 |
+| Downscale Filter | Lanczos |
+| FPS | 30 |
+
+> **Why 30fps instead of 60?** For most content (talks, presentations, interviews), 30fps halves the encoding cost with no noticeable quality difference. Use 60fps only for gaming or sports content.
+
+## Advanced Settings
+
+Open **Settings → Advanced**:
+
+| Setting | Value |
+|---------|-------|
+| Color Format | NV12 |
+| Color Space | 709 |
+| Color Range | Partial |
+| Network Buffer | Enable |
+| Bind to IP | Default |
+
+## Testing Your Setup
+
+1. Click **Start Streaming** in OBS
+2. Check MediaLive channel status:
+
+```bash
+# Should show "RUNNING" with active input
+aws medialive describe-channel \
+  --channel-id CHANNEL_ID \
+  --query '{State: State, PipelinesRunningCount: PipelinesRunningCount}'
+```
+
+3. Verify input metrics:
+
+```bash
+aws cloudwatch get-metric-data \
+  --metric-data-queries '[{
+    "Id": "bitrate",
+    "MetricStat": {
+      "Metric": {
+        "Namespace": "AWS/MediaLive",
+        "MetricName": "NetworkIn",
+        "Dimensions": [
+          {"Name": "ChannelId", "Value": "CHANNEL_ID"},
+          {"Name": "Pipeline", "Value": "0"}
+        ]
+      },
+      "Period": 60,
+      "Stat": "Average"
+    }
+  }]' \
+  --start-time $(date -u -v-5M +%Y-%m-%dT%H:%M:%S) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%S)
+```
+
+## Redundant Streaming (Optional)
+
+For production streams, push to **both** MediaLive pipelines simultaneously. OBS doesn't natively support dual output, but you can use the **obs-multi-rtmp** plugin or **FFmpeg** alongside OBS:
+
+```bash
+# Use FFmpeg to relay to the second pipeline
+ffmpeg -listen 1 -i rtmp://localhost:1936/live/relay \
+  -c copy -f flv \
+  rtmp://MEDIALIVE_PIPELINE_B_URL:1935/live/stream-b
+```
+
+Then in OBS, add a custom output to `rtmp://localhost:1936/live/relay`.
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| "Failed to connect" | Check input security group whitelist |
+| Choppy stream | Reduce bitrate or resolution |
+| Audio desync | Set keyframe interval to exactly 2s |
+| High CPU usage | Switch to hardware encoder (NVENC) |
+| Color looks wrong | Ensure Color Space is set to 709 |

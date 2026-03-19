@@ -1,0 +1,299 @@
+---
+title: AWS MediaLive
+description: Set up AWS MediaLive for real-time video encoding with adaptive bitrate output.
+---
+
+# Setting Up AWS MediaLive
+
+AWS MediaLive is a broadcast-grade live video encoding service. In this step, we'll create an input, configure the encoding channel, and set up the ABR output.
+
+![MediaLive Flow](/_assets/images/live-streaming/medialive-flow.svg)
+
+## Step 1: Create an IAM Role
+
+MediaLive needs an IAM role to access MediaPackage, S3, and CloudWatch.
+
+```json title="medialive-trust-policy.json"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "medialive.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+```bash
+# Create the role
+aws iam create-role \
+  --role-name MediaLiveAccessRole \
+  --assume-role-policy-document file://medialive-trust-policy.json
+
+# Attach the managed policy
+aws iam attach-role-policy \
+  --role-name MediaLiveAccessRole \
+  --policy-arn arn:aws:iam::aws:policy/AmazonMediaLiveFullAccess
+
+# Also allow writing to MediaPackage and S3
+aws iam attach-role-policy \
+  --role-name MediaLiveAccessRole \
+  --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+```
+
+> **Security Tip:** In production, create a custom policy with least-privilege permissions instead of using `FullAccess` policies.
+
+## Step 2: Create an Input
+
+The input defines how MediaLive receives your source stream.
+
+```bash
+aws medialive create-input \
+  --name "my-live-input" \
+  --type RTMP_PUSH \
+  --destinations '[
+    {"streamName": "live/stream-a"},
+    {"streamName": "live/stream-b"}
+  ]' \
+  --input-security-groups '["12345678"]'
+```
+
+### Input Security Group
+
+Before creating the input, set up a security group to whitelist your encoder's IP:
+
+```bash
+# Create input security group
+aws medialive create-input-security-group \
+  --whitelist-rules '[{"Cidr": "YOUR_IP/32"}]'
+```
+
+> Replace `YOUR_IP` with your public IP address. Use `curl ifconfig.me` to find it.
+
+The response includes two RTMP endpoints (one per pipeline):
+
+```json
+{
+  "Input": {
+    "Id": "1234567",
+    "Destinations": [
+      {
+        "Url": "rtmp://1.2.3.4:1935/live/stream-a"
+      },
+      {
+        "Url": "rtmp://5.6.7.8:1935/live/stream-b"
+      }
+    ]
+  }
+}
+```
+
+**Save these URLs** — you'll need them for OBS configuration.
+
+## Step 3: Create the Channel
+
+The channel is where encoding happens. Here's the full configuration:
+
+```json title="channel-config.json"
+{
+  "Name": "my-live-channel",
+  "ChannelClass": "STANDARD",
+  "RoleArn": "arn:aws:iam::123456789012:role/MediaLiveAccessRole",
+  "InputAttachments": [
+    {
+      "InputId": "1234567",
+      "InputAttachmentName": "primary-input",
+      "InputSettings": {
+        "DeblockFilter": "DISABLED",
+        "DenoiseFilter": "DISABLED",
+        "FilterStrength": 1,
+        "InputFilter": "AUTO",
+        "SourceEndBehavior": "CONTINUE"
+      }
+    }
+  ],
+  "EncoderSettings": {
+    "AudioDescriptions": [
+      {
+        "AudioSelectorName": "default",
+        "Name": "audio_1",
+        "CodecSettings": {
+          "AacSettings": {
+            "Bitrate": 128000,
+            "SampleRate": 48000,
+            "CodingMode": "CODING_MODE_2_0",
+            "RawFormat": "NONE",
+            "Profile": "LC"
+          }
+        }
+      }
+    ],
+    "VideoDescriptions": [
+      {
+        "Name": "video_1080p",
+        "Width": 1920,
+        "Height": 1080,
+        "CodecSettings": {
+          "H264Settings": {
+            "Bitrate": 5000000,
+            "FramerateNumerator": 30,
+            "FramerateDenominator": 1,
+            "GopSize": 2,
+            "GopSizeUnits": "SECONDS",
+            "Profile": "HIGH",
+            "Level": "H264_LEVEL_4_1",
+            "RateControlMode": "CBR"
+          }
+        }
+      },
+      {
+        "Name": "video_720p",
+        "Width": 1280,
+        "Height": 720,
+        "CodecSettings": {
+          "H264Settings": {
+            "Bitrate": 3000000,
+            "FramerateNumerator": 30,
+            "FramerateDenominator": 1,
+            "GopSize": 2,
+            "GopSizeUnits": "SECONDS",
+            "Profile": "HIGH",
+            "Level": "H264_LEVEL_4_1",
+            "RateControlMode": "CBR"
+          }
+        }
+      },
+      {
+        "Name": "video_480p",
+        "Width": 854,
+        "Height": 480,
+        "CodecSettings": {
+          "H264Settings": {
+            "Bitrate": 1500000,
+            "FramerateNumerator": 30,
+            "FramerateDenominator": 1,
+            "GopSize": 2,
+            "GopSizeUnits": "SECONDS",
+            "Profile": "MAIN",
+            "Level": "H264_LEVEL_3_1",
+            "RateControlMode": "CBR"
+          }
+        }
+      }
+    ],
+    "OutputGroups": [
+      {
+        "Name": "hls-output",
+        "OutputGroupSettings": {
+          "HlsGroupSettings": {
+            "Destination": {
+              "DestinationRefId": "mediapackage-dest"
+            },
+            "HlsCdnSettings": {
+              "HlsMediaStoreSettings": {
+                "ConnectionRetryInterval": 1,
+                "NumRetries": 10
+              }
+            },
+            "SegmentLength": 6,
+            "MinSegmentLength": 0,
+            "IndexNSegments": 3,
+            "ManifestCompression": "NONE"
+          }
+        },
+        "Outputs": [
+          {
+            "OutputName": "1080p",
+            "VideoDescriptionName": "video_1080p",
+            "AudioDescriptionNames": ["audio_1"],
+            "OutputSettings": {
+              "HlsOutputSettings": {
+                "HlsSettings": {
+                  "StandardHlsSettings": {
+                    "M3u8Settings": {}
+                  }
+                },
+                "NameModifier": "_1080p"
+              }
+            }
+          },
+          {
+            "OutputName": "720p",
+            "VideoDescriptionName": "video_720p",
+            "AudioDescriptionNames": ["audio_1"],
+            "OutputSettings": {
+              "HlsOutputSettings": {
+                "HlsSettings": {
+                  "StandardHlsSettings": {
+                    "M3u8Settings": {}
+                  }
+                },
+                "NameModifier": "_720p"
+              }
+            }
+          },
+          {
+            "OutputName": "480p",
+            "VideoDescriptionName": "video_480p",
+            "AudioDescriptionNames": ["audio_1"],
+            "OutputSettings": {
+              "HlsOutputSettings": {
+                "HlsSettings": {
+                  "StandardHlsSettings": {
+                    "M3u8Settings": {}
+                  }
+                },
+                "NameModifier": "_480p"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+```bash
+aws medialive create-channel \
+  --cli-input-json file://channel-config.json
+```
+
+## Step 4: Start the Channel
+
+```bash
+# Start the channel
+aws medialive start-channel --channel-id CHANNEL_ID
+
+# Check status
+aws medialive describe-channel --channel-id CHANNEL_ID \
+  --query 'State'
+```
+
+The channel takes **1-2 minutes** to transition from `CREATING` → `IDLE` → `RUNNING`.
+
+## Encoding Best Practices
+
+### ABR Ladder Recommendations
+
+| Resolution | Bitrate | Use Case |
+|-----------|---------|----------|
+| 1080p | 5.0 Mbps | Desktop / Smart TV |
+| 720p | 3.0 Mbps | Tablet / good mobile |
+| 480p | 1.5 Mbps | Mobile / constrained |
+| 360p | 0.8 Mbps | Very poor connections |
+
+### GOP Settings
+
+- **GOP Size:** 2 seconds (matches common segment lengths)
+- **GOP Mode:** Fixed — ensures consistent segment boundaries
+- **B-frames:** 3 for 1080p/720p, 1 for 480p/360p
+
+### Rate Control
+
+- Use **CBR** (Constant Bitrate) for live streaming — it ensures consistent segment sizes and predictable bandwidth
+- Use **QVBR** (Quality-Defined Variable Bitrate) if you want better quality per bit, but segments will vary in size

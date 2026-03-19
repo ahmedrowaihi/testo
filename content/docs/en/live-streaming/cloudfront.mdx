@@ -1,0 +1,209 @@
+---
+title: CloudFront CDN
+description: Deploy Amazon CloudFront for global low-latency delivery of your live stream.
+---
+
+# Setting Up CloudFront
+
+Amazon CloudFront is the CDN layer that delivers your live stream to viewers worldwide. It caches HLS segments at 400+ edge locations, dramatically reducing latency and origin load.
+
+![CloudFront Distribution](/_assets/images/live-streaming/cloudfront-distribution.svg)
+
+## Step 1: Create a Distribution
+
+```bash
+aws cloudfront create-distribution \
+  --distribution-config '{
+    "CallerReference": "live-stream-dist-001",
+    "Comment": "Live streaming CDN",
+    "Enabled": true,
+    "Origins": {
+      "Quantity": 1,
+      "Items": [
+        {
+          "Id": "mediapackage-origin",
+          "DomainName": "abcd1234.mediapackage.us-east-1.amazonaws.com",
+          "OriginPath": "/out/v1/xyz789",
+          "CustomOriginConfig": {
+            "HTTPPort": 80,
+            "HTTPSPort": 443,
+            "OriginProtocolPolicy": "https-only",
+            "OriginSslProtocols": {
+              "Quantity": 1,
+              "Items": ["TLSv1.2"]
+            }
+          }
+        }
+      ]
+    },
+    "DefaultCacheBehavior": {
+      "TargetOriginId": "mediapackage-origin",
+      "ViewerProtocolPolicy": "redirect-to-https",
+      "AllowedMethods": {
+        "Quantity": 2,
+        "Items": ["GET", "HEAD"]
+      },
+      "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+      "OriginRequestPolicyId": "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf",
+      "Compress": true
+    },
+    "PriceClass": "PriceClass_All",
+    "ViewerCertificate": {
+      "CloudFrontDefaultCertificate": true
+    }
+  }'
+```
+
+## Step 2: Create a Custom Cache Policy
+
+Live streaming requires specific caching rules:
+
+```bash
+aws cloudfront create-cache-policy \
+  --cache-policy-config '{
+    "Name": "LiveStreamingCachePolicy",
+    "Comment": "Optimized for HLS live streaming",
+    "DefaultTTL": 3,
+    "MaxTTL": 6,
+    "MinTTL": 1,
+    "ParametersInCacheKeyAndForwardedToOrigin": {
+      "EnableAcceptEncodingGzip": true,
+      "EnableAcceptEncodingBrotli": true,
+      "HeadersConfig": {
+        "HeaderBehavior": "none"
+      },
+      "CookiesConfig": {
+        "CookieBehavior": "none"
+      },
+      "QueryStringsConfig": {
+        "QueryStringBehavior": "none"
+      }
+    }
+  }'
+```
+
+### Why These TTL Values?
+
+| TTL | Reason |
+|-----|--------|
+| **Min TTL: 1s** | Prevents stale manifest delivery |
+| **Default TTL: 3s** | Half the segment duration (6s) — ensures fresh segments |
+| **Max TTL: 6s** | Never cache longer than one segment |
+
+> Manifests (`.m3u8`) must have short TTLs to ensure viewers get the latest segment references. Segments (`.ts`) can be cached longer since they're immutable once created.
+
+## Step 3: Add Separate Behaviors for Segments
+
+Create a cache behavior specifically for `.ts` segments with longer TTLs:
+
+```bash
+# Segments are immutable — cache them aggressively
+aws cloudfront create-cache-policy \
+  --cache-policy-config '{
+    "Name": "LiveStreamingSegmentPolicy",
+    "Comment": "Long cache for immutable HLS segments",
+    "DefaultTTL": 86400,
+    "MaxTTL": 86400,
+    "MinTTL": 86400,
+    "ParametersInCacheKeyAndForwardedToOrigin": {
+      "EnableAcceptEncodingGzip": true,
+      "EnableAcceptEncodingBrotli": false,
+      "HeadersConfig": { "HeaderBehavior": "none" },
+      "CookiesConfig": { "CookieBehavior": "none" },
+      "QueryStringsConfig": { "QueryStringBehavior": "none" }
+    }
+  }'
+```
+
+Then add a path pattern behavior for `*.ts` using this policy.
+
+## Step 4: Enable Origin Shield
+
+Origin Shield adds an extra caching layer between edge locations and your origin, reducing load on MediaPackage:
+
+```bash
+# Update origin to enable Origin Shield
+# Choose the region closest to your MediaPackage channel
+{
+  "OriginShield": {
+    "Enabled": true,
+    "OriginShieldRegion": "us-east-1"
+  }
+}
+```
+
+Benefits:
+- **Reduces origin requests** by 50-80%
+- **Improves cache hit ratio** by consolidating requests
+- **Lowers MediaPackage costs** by reducing originated data
+
+## Step 5: (Optional) Custom Domain & SSL
+
+```bash
+# Request a certificate in ACM (must be in us-east-1 for CloudFront)
+aws acm request-certificate \
+  --domain-name live.example.com \
+  --validation-method DNS \
+  --region us-east-1
+
+# After validation, update distribution to use the certificate
+# and add live.example.com as an alternate domain (CNAME)
+```
+
+Then add a DNS CNAME record:
+```
+live.example.com → d1234567890.cloudfront.net
+```
+
+## Step 6: Enable Access Logging
+
+```bash
+# Create an S3 bucket for logs
+aws s3 mb s3://my-live-stream-logs
+
+# Enable logging on the distribution
+{
+  "Logging": {
+    "Enabled": true,
+    "Bucket": "my-live-stream-logs.s3.amazonaws.com",
+    "Prefix": "cdn-logs/",
+    "IncludeCookies": false
+  }
+}
+```
+
+## Security: Signed URLs
+
+To restrict access to paying subscribers or authenticated users:
+
+```python title="generate_signed_url.py"
+import datetime
+from cryptography.hazmat.primitives import serialization
+from botocore.signers import CloudFrontSigner
+
+def rsa_signer(message):
+    with open('private_key.pem', 'rb') as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(), password=None
+        )
+    return private_key.sign(message, padding.PKCS1v15(), hashes.SHA1())
+
+key_pair_id = 'APKAEIBAERJR2EXAMPLE'
+cf_signer = CloudFrontSigner(key_pair_id, rsa_signer)
+
+# Generate a signed URL valid for 8 hours
+url = cf_signer.generate_presigned_url(
+    'https://d1234567890.cloudfront.net/index.m3u8',
+    date_less_than=datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+)
+print(url)
+```
+
+## Performance Checklist
+
+- [x] Origin Shield enabled in the same region as MediaPackage
+- [x] Separate cache policies for manifests (short TTL) and segments (long TTL)
+- [x] HTTP/3 enabled for faster initial connections
+- [x] Compression enabled for manifests
+- [x] Price class set appropriately for your audience geography
+- [x] Access logging enabled for troubleshooting

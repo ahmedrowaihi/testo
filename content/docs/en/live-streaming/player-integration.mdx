@@ -1,0 +1,312 @@
+---
+title: Player Integration
+description: Build a web video player with HLS.js to consume your live stream.
+---
+
+# Player Integration
+
+Now that the streaming pipeline is running, let's build the viewer experience. We'll cover web (HLS.js), mobile (ExoPlayer/AVPlayer), and provide a complete React component.
+
+## Web Player with HLS.js
+
+[HLS.js](https://github.com/video-dev/hls.js) is the most popular open-source HLS player for the web. It works in all modern browsers.
+
+### Basic HTML Player
+
+```html title="player.html"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Stream</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    video { width: 100%; max-width: 1280px; aspect-ratio: 16/9; background: #111; }
+    .live-badge {
+      position: absolute; top: 16px; left: 16px;
+      background: #ef4444; color: white; padding: 4px 12px;
+      border-radius: 4px; font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body>
+  <div style="position: relative;">
+    <video id="video" controls autoplay muted></video>
+    <div class="live-badge">Live</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    const video = document.getElementById('video');
+    const streamUrl = 'https://d1234567890.cloudfront.net/index.m3u8';
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        lowLatencyMode: true,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 30,
+      });
+
+      hls.loadSource(streamUrl);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => console.log('Autoplay blocked'));
+      });
+
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.error('Network error, attempting recovery...');
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.error('Media error, attempting recovery...');
+              hls.recoverMediaError();
+              break;
+            default:
+              hls.destroy();
+              break;
+          }
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari native HLS
+      video.src = streamUrl;
+    }
+  </script>
+</body>
+</html>
+```
+
+### React Component
+
+```tsx title="LivePlayer.tsx"
+import { useEffect, useRef, useState } from 'react';
+import Hls from 'hls.js';
+
+interface LivePlayerProps {
+  url: string;
+  autoplay?: boolean;
+}
+
+export function LivePlayer({ url, autoplay = true }: LivePlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [isLive, setIsLive] = useState(false);
+  const [quality, setQuality] = useState<number>(-1);
+  const [levels, setLevels] = useState<{ height: number; bitrate: number }[]>([]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        lowLatencyMode: true,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 30,
+      });
+
+      hlsRef.current = hls;
+      hls.loadSource(url);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+        setIsLive(true);
+        setLevels(data.levels.map(l => ({
+          height: l.height,
+          bitrate: l.bitrate,
+        })));
+        if (autoplay) {
+          video.play().catch(() => {});
+        }
+      });
+
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+        setQuality(data.level);
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+          }
+        }
+      });
+
+      return () => {
+        hls.destroy();
+        hlsRef.current = null;
+      };
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+    }
+  }, [url, autoplay]);
+
+  const handleQualityChange = (level: number) => {
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = level;
+      setQuality(level);
+    }
+  };
+
+  return (
+    <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
+      <video
+        ref={videoRef}
+        controls
+        muted
+        playsInline
+        style={{ width: '100%', display: 'block' }}
+      />
+
+      {isLive && (
+        <span style={{
+          position: 'absolute', top: 12, left: 12,
+          background: '#ef4444', color: '#fff',
+          padding: '2px 8px', borderRadius: 4,
+          fontSize: 12, fontWeight: 700,
+        }}>
+          LIVE
+        </span>
+      )}
+
+      {levels.length > 1 && (
+        <div style={{
+          position: 'absolute', bottom: 48, right: 12,
+          background: 'rgba(0,0,0,0.8)', borderRadius: 6, padding: 8,
+        }}>
+          <button
+            onClick={() => handleQualityChange(-1)}
+            style={{
+              display: 'block', width: '100%', padding: '4px 12px',
+              background: quality === -1 ? '#3b82f6' : 'transparent',
+              color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer',
+              fontSize: 12, marginBottom: 2,
+            }}
+          >
+            Auto
+          </button>
+          {levels.map((level, i) => (
+            <button
+              key={level.height}
+              onClick={() => handleQualityChange(i)}
+              style={{
+                display: 'block', width: '100%', padding: '4px 12px',
+                background: quality === i ? '#3b82f6' : 'transparent',
+                color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer',
+                fontSize: 12, marginBottom: 2,
+              }}
+            >
+              {level.height}p ({(level.bitrate / 1_000_000).toFixed(1)} Mbps)
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+Usage:
+
+```tsx
+<LivePlayer url="https://d1234567890.cloudfront.net/index.m3u8" />
+```
+
+## Mobile Players
+
+### Android (ExoPlayer)
+
+```kotlin title="LiveStreamActivity.kt"
+class LiveStreamActivity : AppCompatActivity() {
+    private lateinit var player: ExoPlayer
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_live)
+
+        val playerView = findViewById<PlayerView>(R.id.player_view)
+
+        player = ExoPlayer.Builder(this)
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        5000,   // min buffer
+                        15000,  // max buffer
+                        2500,   // playback buffer
+                        5000    // rebuffer
+                    )
+                    .build()
+            )
+            .build()
+
+        playerView.player = player
+
+        val mediaItem = MediaItem.Builder()
+            .setUri("https://d1234567890.cloudfront.net/index.m3u8")
+            .setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder()
+                    .setMaxPlaybackSpeed(1.04f)
+                    .setTargetOffsetMs(6000)
+                    .build()
+            )
+            .build()
+
+        player.setMediaItem(mediaItem)
+        player.prepare()
+        player.play()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        player.release()
+    }
+}
+```
+
+### iOS (AVPlayer)
+
+```swift title="LiveStreamViewController.swift"
+import AVKit
+
+class LiveStreamViewController: AVPlayerViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        let url = URL(string: "https://d1234567890.cloudfront.net/index.m3u8")!
+
+        let asset = AVURLAsset(url: url)
+        let playerItem = AVPlayerItem(asset: asset)
+
+        // Prefer lower latency
+        playerItem.automaticallyPreservesTimeOffsetFromLive = true
+        playerItem.configuredTimeOffsetFromLive = CMTime(seconds: 4, preferredTimescale: 1)
+
+        player = AVPlayer(playerItem: playerItem)
+        player?.play()
+    }
+}
+```
+
+> **Note:** iOS/macOS support HLS natively through AVPlayer — no third-party library needed.
+
+## Player Configuration Tips
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `liveSyncDurationCount` | 3 | Target latency in segments |
+| `liveMaxLatencyDurationCount` | 6 | Max before seeking to live edge |
+| `maxBufferLength` | 10s | Prevent excessive buffering |
+| `lowLatencyMode` | true | Enable LL-HLS support |

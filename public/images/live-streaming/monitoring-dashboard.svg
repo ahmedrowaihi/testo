@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 350" font-family="system-ui, sans-serif">
+  <defs>
+    <linearGradient id="bg4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="350" rx="12" fill="url(#bg4)"/>
+
+  <text x="400" y="30" text-anchor="middle" fill="#94a3b8" font-size="14" font-weight="600">CloudWatch Live Streaming Dashboard</text>
+
+  <!-- Metric 1: Bitrate -->
+  <rect x="20" y="50" width="240" height="130" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="35" y="75" fill="#94a3b8" font-size="11">Input Bitrate (Mbps)</text>
+  <text x="35" y="100" fill="#22c55e" font-size="28" font-weight="700">5.2</text>
+  <polyline points="35,150 55,145 75,148 95,135 115,138 135,130 155,132 175,125 195,128 215,120 235,122 245,118" fill="none" stroke="#22c55e" stroke-width="2"/>
+  <line x1="35" y1="155" x2="245" y2="155" stroke="#334155" stroke-width="1"/>
+
+  <!-- Metric 2: Active Outputs -->
+  <rect x="280" y="50" width="240" height="130" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="295" y="75" fill="#94a3b8" font-size="11">Active Viewers</text>
+  <text x="295" y="100" fill="#3b82f6" font-size="28" font-weight="700">12,847</text>
+  <polyline points="295,155 315,150 335,145 355,140 375,142 395,130 415,125 435,120 455,118 475,110 495,105 505,100" fill="none" stroke="#3b82f6" stroke-width="2"/>
+  <line x1="295" y1="155" x2="505" y2="155" stroke="#334155" stroke-width="1"/>
+
+  <!-- Metric 3: Errors -->
+  <rect x="540" y="50" width="240" height="130" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="555" y="75" fill="#94a3b8" font-size="11">Error Rate (%)</text>
+  <text x="555" y="100" fill="#22c55e" font-size="28" font-weight="700">0.02</text>
+  <polyline points="555,150 575,150 595,149 615,150 635,148 655,150 675,149 695,150 715,148 735,150 755,149 765,150" fill="none" stroke="#22c55e" stroke-width="2"/>
+  <line x1="555" y1="155" x2="765" y2="155" stroke="#334155" stroke-width="1"/>
+
+  <!-- Latency panel -->
+  <rect x="20" y="200" width="370" height="130" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="35" y="225" fill="#94a3b8" font-size="11">End-to-End Latency by Region</text>
+
+  <text x="35" y="255" fill="#e2e8f0" font-size="11">US East</text>
+  <rect x="120" y="244" width="180" height="14" rx="3" fill="#1e40af"/>
+  <text x="310" y="256" fill="#93c5fd" font-size="11">4.2s</text>
+
+  <text x="35" y="280" fill="#e2e8f0" font-size="11">EU West</text>
+  <rect x="120" y="269" width="210" height="14" rx="3" fill="#7c3aed"/>
+  <text x="340" y="281" fill="#c4b5fd" font-size="11">4.8s</text>
+
+  <text x="35" y="305" fill="#e2e8f0" font-size="11">AP South</text>
+  <rect x="120" y="294" width="250" height="14" rx="3" fill="#f97316"/>
+  <text x="380" y="306" fill="#fdba74" font-size="11">5.7s</text>
+
+  <!-- Alerts panel -->
+  <rect x="410" y="200" width="370" height="130" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="425" y="225" fill="#94a3b8" font-size="11">Active Alerts</text>
+
+  <circle cx="435" cy="252" r="5" fill="#22c55e"/>
+  <text x="450" y="256" fill="#e2e8f0" font-size="11">MediaLive Channel - Running</text>
+
+  <circle cx="435" cy="277" r="5" fill="#22c55e"/>
+  <text x="450" y="281" fill="#e2e8f0" font-size="11">MediaPackage Endpoint - Healthy</text>
+
+  <circle cx="435" cy="302" r="5" fill="#eab308"/>
+  <text x="450" y="306" fill="#e2e8f0" font-size="11">CloudFront Cache Hit Ratio - 94.2%</text>
+</svg>
